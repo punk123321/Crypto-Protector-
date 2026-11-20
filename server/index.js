@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import Parser from 'rss-parser';
 import OpenAI from 'openai';
 import ffmpeg from 'fluent-ffmpeg';
@@ -14,9 +15,11 @@ const root = path.resolve(__dirname, '..');
 const outputDir = path.join(root, 'outputs');
 await fs.mkdir(outputDir, { recursive: true });
 const app = express();
+app.set('trust proxy', 1);
 const parser = new Parser({ timeout: 15000 });
 app.use(cors({ origin: process.env.CORS_ORIGIN?.split(',') || true }));
 app.use(express.json({ limit: '1mb' }));
+app.use('/api/generate', rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'တစ်နာရီအတွင်း ထုတ်လုပ်မှု ၅ ကြိမ်သာ ခွင့်ပြုထားပါသည်။ နောက်မှ ပြန်စမ်းပါ။' } }));
 app.use('/outputs', express.static(outputDir));
 
 const clean = (value, max = 500) => String(value || '').trim().slice(0, max);

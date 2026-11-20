@@ -101,7 +101,7 @@ async function synthesizeNarration(ai, narration, jobDir) {
     await fs.rename(path.join(jobDir, files[0]), audioPath);
   } else {
     const concatPath = path.join(jobDir, 'concat.txt');
-    await fs.writeFile(concatPath, files.map(name => `file '${name}'`).join('\\n') + '\\n', 'utf8');
+    await fs.writeFile(concatPath, files.map(name => `file '${name}'`).join('\n') + '\n', 'utf8');
     await new Promise((resolve, reject) => {
       const process = spawn('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', concatPath, '-c', 'copy', audioPath], { cwd: jobDir, stdio: ['ignore', 'ignore', 'pipe'] });
       let stderr = '';

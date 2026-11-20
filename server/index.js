@@ -55,6 +55,17 @@ function buildSrt(scenes, totalSeconds) {
   }).join('\n');
 }
 
+async function getAudioDuration(filePath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(filePath, (error, metadata) => {
+      if (error) return reject(error);
+      const seconds = Number(metadata?.format?.duration);
+      if (!Number.isFinite(seconds) || seconds <= 0) return reject(new Error('အသံဖိုင်ကြာချိန်ကို မဖတ်နိုင်ပါ။'));
+      resolve(seconds);
+    });
+  });
+}
+
 async function makeVideo({ audioPath, srtPath, videoPath, ratio, seconds }) {
   const size = ratio === '16:9' ? '1920x1080' : '1080x1920';
   const subtitlePath = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
@@ -122,18 +133,19 @@ app.post('/api/generate', async (req, res) => {
       response_format: 'mp3'
     });
     await fs.writeFile(audioPath, Buffer.from(await speech.arrayBuffer()));
-    const estimatedSeconds = Math.max(10, Math.min(duration, [...script.narration].length / 11));
-    const srt = buildSrt(script.scenes, estimatedSeconds);
+    const actualSeconds = await getAudioDuration(audioPath);
+    const renderSeconds = Math.min(actualSeconds, duration + 15);
+    const srt = buildSrt(script.scenes, renderSeconds);
     const srtPath = path.join(jobDir, 'subtitles.srt');
     await fs.writeFile(srtPath, srt, 'utf8');
     const videoPath = path.join(jobDir, 'news-video.mp4');
-    await makeVideo({ audioPath, srtPath, videoPath, ratio, seconds: estimatedSeconds });
+    await makeVideo({ audioPath, srtPath, videoPath, ratio, seconds: renderSeconds });
     const base = `${req.protocol}://${req.get('host')}/outputs/${id}`;
     res.json({
       id, title: script.title || topic, summary: script.summary || '',
       scenes: script.scenes, factCheckNotes: script.fact_check_notes || [],
       sources: articles.map(({ title, link, source, publishedAt }) => ({ title, link, source, publishedAt })),
-      durationSeconds: estimatedSeconds, ratio,
+      durationSeconds: renderSeconds, ratio,
       narrationUrl: `${base}/narration.mp3`,
       subtitleUrl: `${base}/subtitles.srt`,
       videoUrl: `${base}/news-video.mp4`

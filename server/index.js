@@ -60,6 +60,59 @@ function buildSrt(scenes, totalSeconds) {
   }).join('\n');
 }
 
+function splitNarration(text, maxChars = 3500) {
+  const sentences = text.match(/[^။!?]+[။!?]?/gu) || [text];
+  const chunks = [];
+  let current = '';
+  for (const sentence of sentences) {
+    if ([...sentence].length > maxChars) {
+      if (current.trim()) chunks.push(current.trim());
+      current = '';
+      const chars = [...sentence];
+      while (chars.length) chunks.push(chars.splice(0, maxChars).join(''));
+      continue;
+    }
+    if ([...current + sentence].length > maxChars && current.trim()) {
+      chunks.push(current.trim());
+      current = sentence;
+    } else current += sentence;
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks;
+}
+
+async function synthesizeNarration(ai, narration, jobDir) {
+  const chunks = splitNarration(narration);
+  const files = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const filename = `narration-${String(i + 1).padStart(3, '0')}.mp3`;
+    const target = path.join(jobDir, filename);
+    const speech = await ai.audio.speech.create({
+      model: process.env.OPENAI_TTS_MODEL || 'tts-1',
+      voice: process.env.OPENAI_TTS_VOICE || 'nova',
+      input: chunks[i],
+      response_format: 'mp3'
+    });
+    await fs.writeFile(target, Buffer.from(await speech.arrayBuffer()));
+    files.push(filename);
+  }
+  const audioPath = path.join(jobDir, 'narration.mp3');
+  if (files.length === 1) {
+    await fs.rename(path.join(jobDir, files[0]), audioPath);
+  } else {
+    const concatPath = path.join(jobDir, 'concat.txt');
+    await fs.writeFile(concatPath, files.map(name => `file '${name}'`).join('\\n') + '\\n', 'utf8');
+    await new Promise((resolve, reject) => {
+      const process = spawn('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', concatPath, '-c', 'copy', audioPath], { cwd: jobDir, stdio: ['ignore', 'ignore', 'pipe'] });
+      let stderr = '';
+      process.stderr.on('data', chunk => { stderr += chunk.toString(); });
+      process.on('error', reject);
+      process.on('close', code => code === 0 ? resolve() : reject(new Error(stderr.slice(-1200) || `Audio concat failed: ${code}`)));
+    });
+  }
+  return audioPath;
+}
+
 async function getAudioDuration(filePath) {
   const { stdout } = await execFileAsync('ffprobe', [
     '-v', 'error', '-show_entries', 'format=duration',
@@ -130,14 +183,7 @@ app.post('/api/generate', async (req, res) => {
     if (!script.narration || !Array.isArray(script.scenes) || !script.scenes.length) {
       throw new Error('AI က အသုံးပြုနိုင်တဲ့ Script မထုတ်ပေးနိုင်ပါ။ ထပ်စမ်းပါ။');
     }
-    const audioPath = path.join(jobDir, 'narration.mp3');
-    const speech = await ai.audio.speech.create({
-      model: process.env.OPENAI_TTS_MODEL || 'tts-1',
-      voice: process.env.OPENAI_TTS_VOICE || 'nova',
-      input: script.narration.slice(0, 4000),
-      response_format: 'mp3'
-    });
-    await fs.writeFile(audioPath, Buffer.from(await speech.arrayBuffer()));
+    const audioPath = await synthesizeNarration(ai, script.narration, jobDir);
     const actualSeconds = await getAudioDuration(audioPath);
     const renderSeconds = Math.min(actualSeconds, duration + 15);
     const srt = buildSrt(script.scenes, renderSeconds);

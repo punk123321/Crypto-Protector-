@@ -1,6 +1,7 @@
 import './style.css';
 
-let API_BASE = (import.meta.env.VITE_API_BASE_URL || localStorage.getItem('newsStudioApiBase') || '').replace(/\/$/, '');
+const trimSlash = (value) => value.endsWith('/') ? value.slice(0, -1) : value;
+let API_BASE = trimSlash(import.meta.env.VITE_API_BASE_URL || localStorage.getItem('newsStudioApiBase') || '');
 const app = document.querySelector('#app');
 app.innerHTML = `
   <main class="shell">
@@ -104,7 +105,7 @@ $('#start').addEventListener('click', async () => {
 
 $('#api-url').value = API_BASE;
 $('#save-api').addEventListener('click', () => {
-  API_BASE = $('#api-url').value.trim().replace(/\/$/, '');
+  API_BASE = trimSlash($('#api-url').value.trim());
   localStorage.setItem('newsStudioApiBase', API_BASE);
   checkApi();
 });

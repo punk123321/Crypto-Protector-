@@ -4,12 +4,14 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import Parser from 'rss-parser';
 import OpenAI from 'openai';
-import ffmpeg from 'fluent-ffmpeg';
+import { spawn, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
+const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 const outputDir = path.join(root, 'outputs');
@@ -59,33 +61,33 @@ function buildSrt(scenes, totalSeconds) {
 }
 
 async function getAudioDuration(filePath) {
-  return new Promise((resolve, reject) => {
-    ffmpeg.ffprobe(filePath, (error, metadata) => {
-      if (error) return reject(error);
-      const seconds = Number(metadata?.format?.duration);
-      if (!Number.isFinite(seconds) || seconds <= 0) return reject(new Error('အသံဖိုင်ကြာချိန်ကို မဖတ်နိုင်ပါ။'));
-      resolve(seconds);
-    });
-  });
+  const { stdout } = await execFileAsync('ffprobe', [
+    '-v', 'error', '-show_entries', 'format=duration',
+    '-of', 'default=noprint_wrappers=1:nokey=1', filePath
+  ]);
+  const seconds = Number(stdout.trim());
+  if (!Number.isFinite(seconds) || seconds <= 0) throw new Error('အသံဖိုင်ကြာချိန်ကို မဖတ်နိုင်ပါ။');
+  return seconds;
 }
 
 async function makeVideo({ audioPath, srtPath, videoPath, ratio, seconds }) {
   const size = ratio === '16:9' ? '1920x1080' : '1080x1920';
-  const subtitlePath = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
+  const subtitlePath = srtPath.replace(/\\\\/g, '/').replace(/:/g, '\\\\:').replace(/'/g, "\\\\'");
   const style = "FontName=Noto Sans Myanmar,FontSize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&H00101010,BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=90";
+  const args = [
+    '-y', '-f', 'lavfi', '-i', `color=c=0x10182b:s=${size}:r=30:d=${seconds}`,
+    '-i', audioPath, '-map', '0:v:0', '-map', '1:a:0',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-b:a', '160k', '-vf',
+    `subtitles='${subtitlePath}':force_style='${style}'`,
+    '-shortest', videoPath
+  ];
   await new Promise((resolve, reject) => {
-    ffmpeg()
-      .input(`color=c=#10182b:s=${size}:r=30:d=${seconds}`)
-      .inputFormat('lavfi')
-      .input(audioPath)
-      .outputOptions([
-        '-map 0:v:0', '-map 1:a:0', '-c:v libx264', '-preset veryfast',
-        '-pix_fmt yuv420p', '-c:a aac', '-b:a 160k', '-shortest',
-        '-vf', `subtitles='${subtitlePath}':force_style='${style}'`
-      ])
-      .on('end', resolve)
-      .on('error', reject)
-      .save(videoPath);
+    const process = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    process.stderr.on('data', chunk => { stderr += chunk.toString(); });
+    process.on('error', reject);
+    process.on('close', code => code === 0 ? resolve() : reject(new Error(stderr.slice(-1800) || `FFmpeg exited with code ${code}`)));
   });
 }
 

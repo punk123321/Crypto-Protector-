@@ -80,36 +80,109 @@ function splitNarration(text, maxChars = 3500) {
   return chunks;
 }
 
-async function synthesizeNarration(ai, narration, jobDir) {
-  const chunks = splitNarration(narration);
-  const files = [];
-  for (let i = 0; i < chunks.length; i++) {
-    const filename = `narration-${String(i + 1).padStart(3, '0')}.mp3`;
-    const target = path.join(jobDir, filename);
-    const speech = await ai.audio.speech.create({
-      model: process.env.OPENAI_TTS_MODEL || 'tts-1',
-      voice: process.env.OPENAI_TTS_VOICE || 'nova',
-      input: chunks[i],
-      response_format: 'mp3'
-    });
-    await fs.writeFile(target, Buffer.from(await speech.arrayBuffer()));
-    files.push(filename);
-  }
-  const audioPath = path.join(jobDir, 'narration.mp3');
-  if (files.length === 1) {
-    await fs.rename(path.join(jobDir, files[0]), audioPath);
-  } else {
+async function concatMp3Files(jobDir, files) {
+  const outputPath = path.join(jobDir, 'narration.mp3');
+  if (files.length === 1) await fs.rename(path.join(jobDir, files[0]), outputPath);
+  else {
     const concatPath = path.join(jobDir, 'concat.txt');
-    await fs.writeFile(concatPath, files.map(name => `file '${name}'`).join('\n') + '\n', 'utf8');
+    await fs.writeFile(concatPath, files.map(name => "file '" + name + "'").join('\n') + '\n', 'utf8');
     await new Promise((resolve, reject) => {
-      const process = spawn('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', concatPath, '-c', 'copy', audioPath], { cwd: jobDir, stdio: ['ignore', 'ignore', 'pipe'] });
-      let stderr = '';
-      process.stderr.on('data', chunk => { stderr += chunk.toString(); });
-      process.on('error', reject);
-      process.on('close', code => code === 0 ? resolve() : reject(new Error(stderr.slice(-1200) || `Audio concat failed: ${code}`)));
+      const proc = spawn('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', concatPath, '-c', 'copy', outputPath], { cwd: jobDir, stdio: ['ignore', 'ignore', 'pipe'] });
+      let stderr = ''; proc.stderr.on('data', c => { stderr += c.toString(); });
+      proc.on('error', reject); proc.on('close', code => code === 0 ? resolve() : reject(new Error(stderr.slice(-1200))));
     });
   }
-  return audioPath;
+  return outputPath;
+}
+async function synthesizeAzure(narration, jobDir) {
+  const key = process.env.AZURE_SPEECH_KEY, region = process.env.AZURE_SPEECH_REGION;
+  if (!key || !region) throw new Error('Azure အသံထုတ်ရန် AZURE_SPEECH_KEY နဲ့ AZURE_SPEECH_REGION လိုအပ်ပါတယ်။');
+  const voice = process.env.AZURE_SPEECH_VOICE || 'my-MM-NilarNeural', files = [];
+  const chunks = splitNarration(narration, 4000);
+  for (let i = 0; i < chunks.length; i++) {
+    const escaped = chunks[i].replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const ssml = "<speak version='1.0' xml:lang='my-MM'><voice name='" + voice + "'>" + escaped + "</voice></speak>";
+    const response = await fetch('https://' + region + '.tts.speech.microsoft.com/cognitiveservices/v1', {
+      method: 'POST', headers: { 'Ocp-Apim-Subscription-Key': key, 'Content-Type': 'application/ssml+xml', 'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3', 'User-Agent': 'One-Click-AI-News-Studio' }, body: ssml
+    });
+    if (!response.ok) throw new Error('Microsoft Azure TTS error (' + response.status + '): ' + (await response.text()).slice(0, 500));
+    const name = 'narration-' + String(i + 1).padStart(3, '0') + '.mp3';
+    await fs.writeFile(path.join(jobDir, name), Buffer.from(await response.arrayBuffer())); files.push(name);
+  }
+  return concatMp3Files(jobDir, files);
+}
+async function synthesizeOpenAI(narration, jobDir) {
+  const ai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY }), files = [], chunks = splitNarration(narration);
+  for (let i = 0; i < chunks.length; i++) {
+    const speech = await ai.audio.speech.create({ model: process.env.OPENAI_TTS_MODEL || 'tts-1', voice: process.env.OPENAI_TTS_VOICE || 'nova', input: chunks[i], response_format: 'mp3' });
+    const name = 'narration-' + String(i + 1).padStart(3, '0') + '.mp3';
+    await fs.writeFile(path.join(jobDir, name), Buffer.from(await speech.arrayBuffer())); files.push(name);
+  }
+  return concatMp3Files(jobDir, files);
+}
+async function synthesizeNarration(narration, jobDir) {
+  const provider = (process.env.TTS_PROVIDER || (process.env.AZURE_SPEECH_KEY ? 'azure' : 'openai')).toLowerCase();
+  if (provider === 'azure') return synthesizeAzure(narration, jobDir);
+  if (provider === 'openai' && process.env.OPENAI_API_KEY) return synthesizeOpenAI(narration, jobDir);
+  throw new Error('TTS Provider မသတ်မှတ်ရသေးပါ။ Azure သုံးရန် AZURE_SPEECH_KEY / AZURE_SPEECH_REGION ထည့်ပြီး TTS_PROVIDER=azure သတ်မှတ်ပါ။');
+}
+async function generateWithGemini(topic, duration, articles) {
+  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  const prompt = 'တိကျမှုကို ဦးစားပေးသော မြန်မာသတင်းဗီဒီယို ထုတ်လုပ်သူအဖြစ် ပေးထားသော သတင်းများကိုသာ အခြေခံပါ။ မသေချာသောအချက်ကို အတည်ပြုမရေးပါနှင့်။ သဘာဝကျသော မြန်မာစကားပြောပုံစံဖြင့် JSON သာပြန်ပါ။ Schema: {"title":"...","summary":"...","narration":"...","scenes":[{"text":"subtitle sentence","visual_prompt":"English visual search description"}],"fact_check_notes":["..."]}. scenes 8 မှ 24 ခု။ ကြာချိန် ' + duration + ' စက္ကန့်။ Topic: ' + topic + '\nArticles: ' + JSON.stringify(articles);
+  const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + process.env.GEMINI_API_KEY, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0.45, responseMimeType: 'application/json' } })
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error('Gemini API error (' + response.status + '): ' + (data.error?.message || 'Unknown error'));
+  const raw = data.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '{}';
+  return JSON.parse(raw);
+}
+async function generateWithOpenAI(topic, duration, articles) {
+  const ai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const response = await ai.chat.completions.create({
+    model: process.env.OPENAI_MODEL || 'gpt-4o-mini', temperature: 0.45, response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: 'သင်သည် တိကျမှုကို ဦးစားပေးသော မြန်မာသတင်းဗီဒီယို ထုတ်လုပ်သူဖြစ်သည်။ ပေးထားသော ဆောင်းပါးများထဲက အချက်အလက်ကိုသာ သုံးပါ။ မသေချာသော အချက်ကို အတည်ပြုချက်အဖြစ် မရေးပါနှင့်။ မြန်မာစကားပြောသဘာဝကျကျ ရေးပါ။ JSON သာပြန်ပါ။ Schema: {"title":"...","summary":"...","narration":"...","scenes":[{"text":"subtitle sentence","visual_prompt":"English visual search description"}],"fact_check_notes":["..."]}. scenes ကို 8 မှ 24 ခုအတွင်းထားပါ။' },
+      { role: 'user', content: JSON.stringify({ topic, targetDurationSeconds: duration, articles }) }
+    ]
+  });
+  return JSON.parse(response.choices[0]?.message?.content || '{}');
+}
+async function transcribeWithAssemblyAI(audioPath) {
+  const key = process.env.ASSEMBLYAI_API_KEY; if (!key) return null;
+  const audio = await fs.readFile(audioPath);
+  const upload = await fetch('https://api.assemblyai.com/v2/upload', { method: 'POST', headers: { authorization: key, 'content-type': 'application/octet-stream' }, body: audio });
+  const uploaded = await upload.json();
+  if (!upload.ok) throw new Error('AssemblyAI upload error: ' + (uploaded.error || upload.status));
+  const submitted = await fetch('https://api.assemblyai.com/v2/transcript', {
+    method: 'POST', headers: { authorization: key, 'content-type': 'application/json' },
+    body: JSON.stringify({ audio_url: uploaded.upload_url, speech_model: 'universal-2', language_code: 'my', punctuate: true, format_text: true })
+  });
+  const job = await submitted.json();
+  if (!submitted.ok) throw new Error('AssemblyAI transcription error: ' + (job.error || submitted.status));
+  const deadline = Date.now() + 8 * 60 * 1000;
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 2500));
+    const poll = await fetch('https://api.assemblyai.com/v2/transcript/' + job.id, { headers: { authorization: key } });
+    const result = await poll.json();
+    if (!poll.ok) throw new Error('AssemblyAI status error: ' + poll.status);
+    if (result.status === 'completed') return result;
+    if (result.status === 'error') throw new Error('AssemblyAI transcription failed: ' + result.error);
+  }
+  throw new Error('AssemblyAI transcription အချိန်ကျော်သွားပါတယ်။');
+}
+function buildTimedSrt(transcript, scenes, totalSeconds) {
+  const words = transcript?.words || []; if (!words.length) return buildSrt(scenes, totalSeconds);
+  const groups = []; let group = [];
+  for (const word of words) {
+    group.push(word);
+    if (group.length >= 7 || /[။!?]$/.test(group.map(w => w.text).join(' '))) { groups.push(group); group = []; }
+  }
+  if (group.length) groups.push(group);
+  return groups.map((cue, i) => {
+    const start = Math.max(0, cue[0].start / 1000), end = Math.min(totalSeconds, Math.max(start + 0.25, cue[cue.length - 1].end / 1000));
+    return (i + 1) + '\n' + timestamp(start) + ' --> ' + timestamp(end) + '\n' + cue.map(w => w.text).join(' ').trim() + '\n';
+  }).join('\n');
 }
 
 async function getAudioDuration(filePath) {
@@ -146,8 +219,9 @@ async function makeVideo({ audioPath, srtPath, videoPath, ratio, seconds }) {
 app.get('/api/health', (_req, res) => res.json({
   ok: true,
   service: 'One-Click AI News Studio API',
-  aiConfigured: Boolean(process.env.OPENAI_API_KEY),
-  ttsConfigured: Boolean(process.env.OPENAI_API_KEY),
+  aiConfigured: Boolean(process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY),
+  ttsConfigured: Boolean((process.env.AZURE_SPEECH_KEY && process.env.AZURE_SPEECH_REGION) || process.env.OPENAI_API_KEY),
+  providers: { gemini: Boolean(process.env.GEMINI_API_KEY), assemblyAI: Boolean(process.env.ASSEMBLYAI_API_KEY), microsoftAzure: Boolean(process.env.AZURE_SPEECH_KEY && process.env.AZURE_SPEECH_REGION) },
   ffmpegConfigured: true
 }));
 
@@ -156,8 +230,8 @@ app.post('/api/generate', async (req, res) => {
   const ratio = req.body?.ratio === '16:9' ? '16:9' : '9:16';
   const duration = Math.min(600, Math.max(30, Number(req.body?.duration) || 180));
   if (!topic) return res.status(400).json({ error: 'သတင်းအကြောင်းအရာကို ဖြည့်ပေးပါ။' });
-  if (!process.env.OPENAI_API_KEY) return res.status(503).json({
-    error: 'OPENAI_API_KEY မသတ်မှတ်ရသေးပါ။ Server ရဲ့ Environment Variables ထဲမှာ API Key ထည့်ပြီး ပြန်စတင်ပါ။',
+  if (!process.env.GEMINI_API_KEY && !process.env.OPENAI_API_KEY) return res.status(503).json({
+    error: 'GEMINI_API_KEY (သို့) OPENAI_API_KEY တစ်ခုခုကို Backend Environment ထဲမှာ ထည့်ပါ။',
     needsSetup: true
   });
 
@@ -167,25 +241,17 @@ app.post('/api/generate', async (req, res) => {
   try {
     const articles = await findNews(topic);
     if (!articles.length) throw new Error('သက်ဆိုင်ရာ သတင်းရင်းမြစ် မတွေ့ပါ။ အကြောင်းအရာကို ပြောင်းပြီး ထပ်စမ်းပါ။');
-    const ai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const response = await ai.chat.completions.create({
-      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-      temperature: 0.45,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: 'သင်သည် တိကျမှုကို ဦးစားပေးသော မြန်မာသတင်းဗီဒီယို ထုတ်လုပ်သူဖြစ်သည်။ ပေးထားသော ဆောင်းပါးများထဲက အချက်အလက်ကိုသာ သုံးပါ။ မသေချာသော အချက်ကို အတည်ပြုချက်အဖြစ် မရေးပါနှင့်။ မြန်မာစကားပြောသဘာဝကျကျ ရေးပါ။ JSON သာပြန်ပါ။ Schema: {"title":"...","summary":"...","narration":"...","scenes":[{"text":"subtitle sentence","visual_prompt":"English visual search description"}],"fact_check_notes":["..."]}. scenes ကို 8 မှ 24 ခုအတွင်းထားပါ။' },
-        { role: 'user', content: JSON.stringify({ topic, targetDurationSeconds: duration, articles }) }
-      ]
-    });
-    const raw = response.choices[0]?.message?.content || '{}';
-    const script = JSON.parse(raw);
+    const script = process.env.GEMINI_API_KEY
+      ? await generateWithGemini(topic, duration, articles)
+      : await generateWithOpenAI(topic, duration, articles);
     if (!script.narration || !Array.isArray(script.scenes) || !script.scenes.length) {
       throw new Error('AI က အသုံးပြုနိုင်တဲ့ Script မထုတ်ပေးနိုင်ပါ။ ထပ်စမ်းပါ။');
     }
-    const audioPath = await synthesizeNarration(ai, script.narration, jobDir);
+    const audioPath = await synthesizeNarration(script.narration, jobDir);
     const actualSeconds = await getAudioDuration(audioPath);
     const renderSeconds = Math.min(actualSeconds, duration + 15);
-    const srt = buildSrt(script.scenes, renderSeconds);
+    const transcript = process.env.ASSEMBLYAI_API_KEY ? await transcribeWithAssemblyAI(audioPath) : null;
+    const srt = buildTimedSrt(transcript, script.scenes, renderSeconds);
     const srtPath = path.join(jobDir, 'subtitles.srt');
     await fs.writeFile(srtPath, srt, 'utf8');
     const videoPath = path.join(jobDir, 'news-video.mp4');

@@ -1,6 +1,6 @@
 import './style.css';
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+let API_BASE = (import.meta.env.VITE_API_BASE_URL || localStorage.getItem('newsStudioApiBase') || '').replace(/\/$/, '');
 const app = document.querySelector('#app');
 app.innerHTML = `
   <main class="shell">

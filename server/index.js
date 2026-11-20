@@ -50,13 +50,12 @@ async function findNews(topic) {
 function buildSrt(scenes, totalSeconds) {
   const usable = scenes.filter(s => clean(s.text, 500));
   const totalChars = usable.reduce((sum, s) => sum + [...s.text].length, 0) || 1;
-  let cursor = 0;
+  let elapsedChars = 0;
   return usable.map((scene, i) => {
-    const share = [...scene.text].length / totalChars;
-    const duration = Math.max(2.2, totalSeconds * share);
-    const start = cursor;
-    cursor = i === usable.length - 1 ? totalSeconds : Math.min(totalSeconds, cursor + duration);
-    return `${i + 1}\n${timestamp(start)} --> ${timestamp(cursor)}\n${scene.text}\n`;
+    const start = totalSeconds * elapsedChars / totalChars;
+    elapsedChars += [...scene.text].length;
+    const end = i === usable.length - 1 ? totalSeconds : totalSeconds * elapsedChars / totalChars;
+    return `${i + 1}\n${timestamp(start)} --> ${timestamp(end)}\n${scene.text}\n`;
   }).join('\n');
 }
 

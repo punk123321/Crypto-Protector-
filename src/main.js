@@ -59,11 +59,11 @@ async function checkApi() {
     const response = await fetch(`${API_BASE}/api/health`, { signal: AbortSignal.timeout(6000) });
     if (!response.ok) throw new Error('API unavailable');
     const data = await response.json();
-    $('#api-status').textContent = data.aiConfigured ? 'API ချိတ်ဆက်ပြီး' : 'API Key လိုအပ်';
+    $('#api-status').textContent = data.aiConfigured ? 'AI ချိတ်ဆက်ပြီး' : 'Gemini API Key လိုအပ်';
     $('#api-status').classList.toggle('online', Boolean(data.aiConfigured));
     $('#message').textContent = data.aiConfigured
       ? 'အဆင်သင့်ဖြစ်ပါပြီ။ သတင်းခေါင်းစဉ်ထည့်ပြီး စတင်နိုင်ပါပြီ။'
-      : 'Backend ရှိနေပါပြီ။ Server Environment ထဲတွင် OPENAI_API_KEY ထည့်ရန် လိုအပ်ပါသည်။';
+      : 'Backend ရှိနေပါပြီ။ Gemini သို့မဟုတ် OpenAI API Key ကို Server Environment ထဲတွင် ထည့်ပါ။';
   } catch {
     $('#api-status').textContent = 'API မချိတ်ဆက်ရသေး';
     $('#api-status').classList.remove('online');

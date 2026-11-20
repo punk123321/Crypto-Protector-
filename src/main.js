@@ -104,7 +104,7 @@ $('#start').addEventListener('click', async () => {
 
 $('#api-url').value = API_BASE;
 $('#save-api').addEventListener('click', () => {
-  API_BASE = $('#api-url').value.trim().replace(/\\/$/, '');
+  API_BASE = $('#api-url').value.trim().replace(/\/$/, '');
   localStorage.setItem('newsStudioApiBase', API_BASE);
   checkApi();
 });

@@ -39,7 +39,7 @@ app.innerHTML = `
     </section>
     <section class="setup">
       <span class="step">SETUP GUIDE</span><h2>Backend ချိတ်ဆက်ရန်</h2>
-      <p>ဒီ App က သတင်းရှာဖွေခြင်းနဲ့ ဗီဒီယို Render လုပ်ဖို့ Backend Server လိုအပ်ပါတယ်။ Server ကို Docker ဖြင့် Deploy လုပ်ပြီး VITE_API_BASE_URL ထည့်ပေးပါ။ OpenAI API Key ကို Backend Environment ထဲမှာသာ ထည့်ပါ။ APK / Browser ထဲမှာ API Key မထည့်ပါနှင့်။</p>
+      <p>ဒီ App က သတင်းရှာဖွေခြင်းနဲ့ ဗီဒီယို Render လုပ်ဖို့ Backend Server လိုအပ်ပါတယ်။ Server ကို Docker ဖြင့် Deploy လုပ်ပြီး VITE_API_BASE_URL ထည့်ပေးပါ။ Gemini၊ AssemblyAI၊ Microsoft Azure API Key များကို Backend Environment ထဲမှာသာ ထည့်ပါ။ APK / Browser ထဲမှာ API Key မထည့်ပါနှင့်။</p>
       <div class="api-config"><label for="api-url">Backend Server URL</label><input id="api-url" type="url" placeholder="https://your-api-server.com"><button id="save-api" type="button">Server ချိတ်ဆက်မယ်</button></div>
       <a href="https://github.com/punk123321/Crypto-Protector-" target="_blank" rel="noreferrer">GitHub Project ကိုကြည့်ရန် ↗</a>
     </section>
